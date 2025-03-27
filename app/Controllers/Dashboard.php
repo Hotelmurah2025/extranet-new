@@ -7,6 +7,9 @@ use App\Models\ReservationModel;
 use App\Models\GuestModel;
 use App\Models\HousekeepingModel;
 use App\Models\ReportModel;
+use App\Models\HotelModel;
+use App\Models\UserModel;
+use App\Models\ReviewModel;
 
 class Dashboard extends BaseController
 {
@@ -15,6 +18,9 @@ class Dashboard extends BaseController
     protected $guestModel;
     protected $housekeepingModel;
     protected $reportModel;
+    protected $hotelModel;
+    protected $userModel;
+    protected $reviewModel;
 
     public function __construct()
     {
@@ -23,6 +29,9 @@ class Dashboard extends BaseController
         $this->guestModel = new GuestModel();
         $this->housekeepingModel = new HousekeepingModel();
         $this->reportModel = new ReportModel();
+        $this->hotelModel = new HotelModel();
+        $this->userModel = new UserModel();
+        $this->reviewModel = new ReviewModel();
     }
 
     public function index()
@@ -31,44 +40,86 @@ class Dashboard extends BaseController
             return redirect()->to('/auth/login');
         }
 
+        $userId = session()->get('user_id');
+        $role = session()->get('role');
         $today = date('Y-m-d');
+        $currentMonth = date('Y-m');
         
-        $totalRooms = count($this->roomModel->findAll());
-        $availableRooms = count($this->roomModel->getRoomsByStatus('available'));
-        $occupiedRooms = count($this->roomModel->getRoomsByStatus('occupied'));
-        $dirtyRooms = count($this->roomModel->getRoomsByStatus('dirty'));
-        
-        $todayCheckIns = $this->reservationModel->select('reservations.*, rooms.room_number, guests.name as guest_name')
-            ->join('rooms', 'rooms.id = reservations.room_id')
-            ->join('guests', 'guests.id = reservations.guest_id')
-            ->where('DATE(check_in_date)', $today)
-            ->where('reservations.status', 'pending')
-            ->findAll();
+        if ($role === 'admin_pusat') {
+            $hotels = $this->hotelModel->findAll();
+        } else {
+            $hotels = $this->userModel->getUserHotels($userId);
             
-        $todayCheckOuts = $this->reservationModel->select('reservations.*, rooms.room_number, guests.name as guest_name')
-            ->join('rooms', 'rooms.id = reservations.room_id')
-            ->join('guests', 'guests.id = reservations.guest_id')
-            ->where('DATE(check_out_date)', $today)
-            ->where('reservations.status', 'checked_in')
-            ->findAll();
+            if (empty($hotels)) {
+                return view('dashboard', [
+                    'title' => 'Dashboard',
+                    'hotels' => [],
+                    'noHotelAccess' => true
+                ]);
+            }
+        }
         
-        $housekeepingTasks = $this->housekeepingModel->select('housekeeping.*, rooms.room_number')
-            ->join('rooms', 'rooms.id = housekeeping.room_id')
-            ->where('housekeeping.scheduled_date', $today)
-            ->findAll();
+        $hotelIds = array_column($hotels, 'id');
+        $hotelStats = [];
+        $totalBookings = 0;
+        $totalOccupancyRate = 0;
+        $totalReviewRating = 0;
+        $hotelCount = count($hotels);
         
-        $occupancyRate = $this->reportModel->getOccupancyRate($today);
+        foreach ($hotels as $hotel) {
+            $rooms = $this->roomModel->getRoomsByHotelId($hotel['id']);
+            $roomIds = array_column($rooms, 'id');
+            $roomCount = count($rooms);
+            
+            if ($roomCount === 0) {
+                continue;
+            }
+            
+            $bookings = $this->reservationModel->select('COUNT(*) as total')
+                ->whereIn('room_id', $roomIds)
+                ->where('SUBSTRING(check_in_date, 1, 7)', $currentMonth)
+                ->first();
+            
+            $hotelBookings = $bookings ? $bookings['total'] : 0;
+            $totalBookings += $hotelBookings;
+            
+            $occupiedRooms = $this->roomModel->where('hotel_id', $hotel['id'])
+                ->where('status', 'occupied')
+                ->countAllResults();
+            
+            $occupancyRate = $roomCount > 0 ? ($occupiedRooms / $roomCount) * 100 : 0;
+            $totalOccupancyRate += $occupancyRate;
+            
+            $averageRating = $this->reviewModel->getAverageRating($hotel['id']);
+            $totalReviewRating += $averageRating;
+            
+            $recentReviews = $this->reviewModel->where('hotel_id', $hotel['id'])
+                ->orderBy('review_date', 'DESC')
+                ->limit(5)
+                ->findAll();
+            
+            $hotelStats[$hotel['id']] = [
+                'hotel' => $hotel,
+                'roomCount' => $roomCount,
+                'bookings' => $hotelBookings,
+                'occupancyRate' => round($occupancyRate, 1),
+                'averageRating' => $averageRating,
+                'recentReviews' => $recentReviews
+            ];
+        }
+        
+        $averageOccupancyRate = $hotelCount > 0 ? $totalOccupancyRate / $hotelCount : 0;
+        $averageReviewRating = $hotelCount > 0 ? $totalReviewRating / $hotelCount : 0;
         
         $data = [
             'title' => 'Dashboard',
-            'totalRooms' => $totalRooms,
-            'availableRooms' => $availableRooms,
-            'occupiedRooms' => $occupiedRooms,
-            'dirtyRooms' => $dirtyRooms,
-            'todayCheckIns' => $todayCheckIns,
-            'todayCheckOuts' => $todayCheckOuts,
-            'housekeepingTasks' => $housekeepingTasks,
-            'occupancyRate' => $occupancyRate
+            'hotels' => $hotels,
+            'hotelStats' => $hotelStats,
+            'totalBookings' => $totalBookings,
+            'averageOccupancyRate' => round($averageOccupancyRate, 1),
+            'averageReviewRating' => round($averageReviewRating, 1),
+            'currentMonth' => date('F Y'),
+            'role' => $role
         ];
         
         return view('dashboard', $data);

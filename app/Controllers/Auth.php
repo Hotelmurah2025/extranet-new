@@ -79,7 +79,7 @@ class Auth extends BaseController
             'username' => $this->request->getPost('username'),
             'email' => $this->request->getPost('email'),
             'password' => $this->request->getPost('password'),
-            'role' => 'receptionist' // Default role
+            'role' => 'user_hotel' // Default role
         ];
 
         $this->userModel->save($data);

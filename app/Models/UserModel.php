@@ -38,4 +38,33 @@ class UserModel extends Model
     {
         return password_verify($password, $hash);
     }
+    
+    public function getUserHotels($userId)
+    {
+        $db = \Config\Database::connect();
+        return $db->table('user_hotels')
+            ->select('hotels.*')
+            ->join('hotels', 'hotels.id = user_hotels.hotel_id')
+            ->where('user_hotels.user_id', $userId)
+            ->get()
+            ->getResultArray();
+    }
+
+    public function addHotelToUser($userId, $hotelId)
+    {
+        $db = \Config\Database::connect();
+        return $db->table('user_hotels')->insert([
+            'user_id' => $userId,
+            'hotel_id' => $hotelId
+        ]);
+    }
+
+    public function removeHotelFromUser($userId, $hotelId)
+    {
+        $db = \Config\Database::connect();
+        return $db->table('user_hotels')
+            ->where('user_id', $userId)
+            ->where('hotel_id', $hotelId)
+            ->delete();
+    }
 }
